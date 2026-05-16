@@ -1,0 +1,54 @@
+{
+  "name": "claude-usage-throttle-hook",
+  "version": "1.0.0",
+  "description": "Session-aware quota throttling for Claude Code. Reads live 5-hour and 7-day usage from the official statusLine, injects quota context into prompts, and deterministically blocks expensive tools when thresholds are crossed. Three throttle profiles: fast, medium, low.",
+  "author": "nadeem",
+  "license": "MIT",
+  "skills": ["skills/quota-aware"],
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/user_prompt_submit.py"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|WebSearch|WebFetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/pre_tool_use.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/session_start.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/stop.py"
+          }
+        ]
+      }
+    ]
+  }
+}

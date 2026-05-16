@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""
+usage-throttle CLI — manage your Claude Code quota throttling.
+
+Usage:
+  usage-throttle status          Show current quota state and config
+  usage-throttle mode fast       Switch to fast mode
+  usage-throttle mode medium     Switch to medium mode
+  usage-throttle mode low        Switch to low mode
+  usage-throttle history         Show recent quota usage trend
+  usage-throttle reset           Reset config to defaults
+"""
+
+import json
+import sys
+import time
+from pathlib import Path
+
+STATE_DIR = Path.home() / ".claude" / "usage-throttle"
+STATE_FILE = STATE_DIR / "state.json"
+CONFIG_FILE = STATE_DIR / "config.json"
+HISTORY_FILE = STATE_DIR / "history.jsonl"
+
+
+def load_json(path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def fmt_pct(val):
+    if isinstance(val, (int, float)):
+        return f"{val:.1f}%"
+    return "--"
+
+
+def fmt_time(ts):
+    if not ts:
+        return "--"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(ts)))
+    except Exception:
+        return str(ts)
+
+
+def cmd_status():
+    state = load_json(STATE_FILE)
+    config = load_json(CONFIG_FILE)
+    mode = config.get("mode", "medium")
+
+    print(f"  Mode:         {mode}")
+    print(f"  5h used:      {fmt_pct(state.get('five_hour_used_pct'))}")
+    print(f"  5h resets:    {state.get('five_hour_resets_at', '--')}")
+    print(f"  7d used:      {fmt_pct(state.get('seven_day_used_pct'))}")
+    print(f"  7d resets:    {state.get('seven_day_resets_at', '--')}")
+    print(f"  Context:      {fmt_pct(state.get('context_used_pct'))}")
+    print(f"  Last update:  {fmt_time(state.get('updated_at'))}")
+
+    thresholds = {
+        "fast":   {"conserve_5h": 90, "critical_5h": 98},
+        "medium": {"conserve_5h": 80, "critical_5h": 95},
+        "low":    {"conserve_5h": 50, "critical_5h": 75},
+    }
+    t = thresholds.get(mode, thresholds["medium"])
+    five = state.get("five_hour_used_pct")
+    if isinstance(five, (int, float)):
+        if five >= t["critical_5h"]:
+            print(f"\n  !! CRITICAL — Agent and web tools are BLOCKED")
+        elif five >= t["conserve_5h"]:
+            print(f"\n  !  CONSERVE — Claude is using concise responses")
+        else:
+            print(f"\n     NORMAL — no restrictions active")
+
+
+def cmd_mode(new_mode):
+    if new_mode not in ("fast", "medium", "low"):
+        print(f"Error: mode must be fast, medium, or low (got '{new_mode}')")
+        sys.exit(1)
+
+    config = load_json(CONFIG_FILE)
+    old_mode = config.get("mode", "medium")
+    config["mode"] = new_mode
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    print(f"  Mode changed: {old_mode} -> {new_mode}")
+
+    descriptions = {
+        "fast":   "Minimal throttling — only blocks at >98% (5h)",
+        "medium": "Balanced — conserves at >80%, blocks at >95% (5h)",
+        "low":    "Aggressive — conserves at >50%, blocks at >75% (5h)",
+    }
+    print(f"  {descriptions[new_mode]}")
+
+
+def cmd_history():
+    if not HISTORY_FILE.exists():
+        print("  No history yet. Run a Claude Code session first.")
+        return
+
+    lines = HISTORY_FILE.read_text(encoding="utf-8").strip().splitlines()
+    entries = []
+    for line in lines[-20:]:
+        try:
+            entries.append(json.loads(line))
+        except Exception:
+            continue
+
+    if not entries:
+        print("  No history entries found.")
+        return
+
+    print(f"  {'Time':<18} {'5h':>6} {'7d':>6} {'Ctx':>6}")
+    print(f"  {'─'*18} {'─'*6} {'─'*6} {'─'*6}")
+    for e in entries:
+        ts = time.strftime("%m-%d %H:%M:%S", time.localtime(e.get("ts", 0)))
+        five = fmt_pct(e.get("five_hour_used_pct")).rjust(6)
+        week = fmt_pct(e.get("seven_day_used_pct")).rjust(6)
+        ctx = fmt_pct(e.get("context_used_pct")).rjust(6)
+        print(f"  {ts:<18} {five} {week} {ctx}")
+
+
+def cmd_reset():
+    config = {"mode": "medium"}
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    print("  Config reset to defaults (mode=medium)")
+
+
+def main():
+    args = sys.argv[1:]
+
+    if not args or args[0] in ("status", "-s"):
+        cmd_status()
+    elif args[0] == "mode":
+        if len(args) < 2:
+            config = load_json(CONFIG_FILE)
+            print(f"  Current mode: {config.get('mode', 'medium')}")
+            print(f"  Usage: usage-throttle mode [fast|medium|low]")
+        else:
+            cmd_mode(args[1])
+    elif args[0] == "history":
+        cmd_history()
+    elif args[0] == "reset":
+        cmd_reset()
+    elif args[0] in ("--help", "-h", "help"):
+        print(__doc__)
+    else:
+        print(f"Unknown command: {args[0]}")
+        print(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
